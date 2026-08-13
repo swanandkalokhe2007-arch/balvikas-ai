@@ -1,0 +1,17 @@
+services:
+  balvikas:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production-balvikas}
+    volumes:
+      - balvikas_data:/app/server/data
+      - balvikas_uploads:/app/server/uploads
+    restart: unless-stopped
+
+volumes:
+  balvikas_data:
+  balvikas_uploads:
