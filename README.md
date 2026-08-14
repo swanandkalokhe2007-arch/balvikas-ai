@@ -32,7 +32,29 @@ Or create a real account on **Sign up**.
 
 ## Production deploy
 
-### Option A — single Node process (API serves built SPA)
+### Option A — Vercel (recommended for prototype)
+
+```bash
+npm i -g vercel
+vercel login
+vercel --prod
+```
+
+Or with a token:
+
+```bash
+npx vercel --prod --yes --token YOUR_VERCEL_TOKEN
+```
+
+Set env in Vercel project settings (optional):
+
+- `JWT_SECRET` — any long random string
+
+Notes:
+- Frontend + `/api` run on the same Vercel project
+- Data is seeded per serverless instance (prototype; not durable multi-user storage)
+
+### Option B — single Node process (API serves built SPA)
 
 ```bash
 npm install
@@ -44,7 +66,7 @@ npm start
 
 Open http://localhost:4000
 
-### Option B — Docker
+### Option C — Docker
 
 ```bash
 docker compose up --build -d

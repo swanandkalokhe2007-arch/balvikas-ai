@@ -29,16 +29,10 @@ app.use(express.json({ limit: '2mb' }))
 app.use(cookieParser())
 app.use('/uploads', express.static(uploadsDir()))
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir()),
-  filename: (_req, file, cb) => {
-    const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')
-    cb(null, `${Date.now()}_${safe}`)
-  },
-})
+// Memory storage works on Vercel (no durable disk). Local still writes via custom handler below.
 const upload = multer({
-  storage,
-  limits: { fileSize: 80 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 12 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (/^(image|video)\//.test(file.mimetype)) cb(null, true)
     else cb(new Error('Only image/video uploads allowed'))
@@ -566,7 +560,16 @@ app.post('/api/media', auth, upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'file required' })
 
     const type = req.file.mimetype.startsWith('video') ? 'video' : 'photo'
-    const url = `/uploads/${req.file.filename}`
+    const safe = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const filename = `${Date.now()}_${safe}`
+    // Prefer writing to disk when available; otherwise store as data URL in DB (prototype)
+    let url = `/uploads/${filename}`
+    try {
+      fs.writeFileSync(path.join(uploadsDir(), filename), req.file.buffer)
+    } catch {
+      const b64 = req.file.buffer.toString('base64')
+      url = `data:${req.file.mimetype};base64,${b64.slice(0, 200000)}`
+    }
     const record = {
       id: id('m'),
       childId,
@@ -584,21 +587,22 @@ app.post('/api/media', auth, upload.single('file'), (req, res) => {
       return d
     })
 
-    // Simulate async analysis then persist results
-    setTimeout(() => {
-      const result = analyzeMedia(req.file.originalname, type)
-      saveDb((d) => {
-        const m = d.media.find((x) => x.id === record.id)
-        if (m) {
-          m.analysisStatus = 'complete'
-          m.analysis = result.analysis
-          m.findings = result.findings
-          m.solutions =
-            'Continue daily interactive play. Capture a short speech sample next week. Share with your doctor at the next visit unless new red flags appear.'
-        }
-        return d
-      })
-    }, 1800)
+    // Analyze promptly (Vercel may freeze after response)
+    const result = analyzeMedia(req.file.originalname, type)
+    saveDb((d) => {
+      const m = d.media.find((x) => x.id === record.id)
+      if (m) {
+        m.analysisStatus = 'complete'
+        m.analysis = result.analysis
+        m.findings = result.findings
+        m.solutions =
+          'Continue daily interactive play. Capture a short speech sample next week. Share with your doctor at the next visit unless new red flags appear.'
+      }
+      return d
+    })
+    record.analysisStatus = 'complete'
+    record.analysis = result.analysis
+    record.findings = result.findings
 
     res.status(201).json({ media: record })
   } catch (e) {
@@ -751,9 +755,9 @@ app.get('/api/stats/overview', auth, (req, res) => {
   })
 })
 
-// Production: serve built SPA
+// Production: serve built SPA (Node / Docker). On Vercel, static is handled by the CDN.
 const dist = path.join(__dirname, '..', 'dist')
-if (fs.existsSync(dist)) {
+if (fs.existsSync(dist) && !process.env.VERCEL) {
   app.use(express.static(dist))
   app.get(/^(?!\/api)(?!\/uploads).*/, (_req, res) => {
     res.sendFile(path.join(dist, 'index.html'))
@@ -765,6 +769,12 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: err.message || 'Server error' })
 })
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`BalVikas API listening on http://0.0.0.0:${PORT}`)
-})
+// Export for Vercel serverless
+export default app
+
+// Local / Docker only
+if (!process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`BalVikas API listening on http://0.0.0.0:${PORT}`)
+  })
+}
